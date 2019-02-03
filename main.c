@@ -86,22 +86,8 @@
 #define DEVICE_MODEL_NUMBERSTR "Version 3.1"
 #define DEVICE_FIRMWARE_STRING "Version 13.1.0"
 static bool m_connected = false;
-#if defined(ADS1292)
-#include "ads1291-2.h"
-#include "ble_eeg.h"
-ble_eeg_t m_eeg;
-#define SPI_SCLK_WRITE_REG 0
-#define SPI_SCLK_SAMPLING 2
-#endif
-
-#if defined(MPU9250) || defined(MPU9255) //mpu_send_timeout_handler
-#include "ble_mpu.h"
-ble_mpu_t m_mpu;
-#include "app_mpu.h"
-#include "nrf_drv_twi.h"
-APP_TIMER_DEF(m_mpu_send_timer_id);
-#define TICKS_MPU_SAMPLING_INTERVAL APP_TIMER_TICKS(32)
-#endif
+#include "ble_sg.h"
+ble_sg_t m_sg;
 
 #if defined(SAADC_ENABLED) && SAADC_ENABLED == 1
 #include "nrf_drv_saadc.h"
@@ -110,11 +96,10 @@ APP_TIMER_DEF(m_mpu_send_timer_id);
 static nrf_saadc_value_t m_buffer_pool[SAMPLES_IN_BUFFER];
 static uint32_t m_adc_evt_counter;
 #endif
-
+#define BATTERY_LEVEL_MEAS_INTERVAL APP_TIMER_TICKS(50) /**< Battery level measurement interval (ticks). */
+APP_TIMER_DEF(m_battery_timer_id);                        /**< Battery timer. */
 #if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
 #include "ble_bas.h"
-#define BATTERY_LEVEL_MEAS_INTERVAL APP_TIMER_TICKS(500) /**< Battery level measurement interval (ticks). */
-APP_TIMER_DEF(m_battery_timer_id);                        /**< Battery timer. */
 static ble_bas_t m_bas;                                   /**< Structure used to identify the battery service. */
 #endif
 
@@ -126,7 +111,7 @@ static uint16_t m_samples;
 
 #define APP_FEATURE_NOT_SUPPORTED BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2 /**< Reply when unsupported features are requested. */
 
-#define DEVICE_NAME "nRF52-GSR"           //"nRF52_EEG"         /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME "nRF52-GSR_v2"           //"nRF52_SG"         /**< Name of device. Will be included in the advertising data. */
 
 #define MANUFACTURER_NAME "Potato Labs" /**< Manufacturer. Will be passed to Device Information Service. */
 #define APP_ADV_INTERVAL 300            /**< The advertising interval (in units of 0.625 ms. This value corresponds to 187.5 ms). */
@@ -161,12 +146,7 @@ static nrf_ble_gatt_t m_gatt;                            /**< GATT module instan
 
 static ble_uuid_t m_adv_uuids[] =
     {
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-        {BLE_UUID_MPU_SERVICE_UUID, BLE_UUID_TYPE_BLE},
-#endif
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
-        {BLE_UUID_BATTERY_SERVICE, BLE_UUID_TYPE_BLE},
-#endif
+        {BLE_UUID_SG_MEASUREMENT_SERVICE, BLE_UUID_TYPE_BLE},
         {BLE_UUID_DEVICE_INFORMATION_SERVICE, BLE_UUID_TYPE_BLE}}; /**< Universally unique service identifiers. */
 
 static void advertising_start(void);
@@ -191,25 +171,14 @@ static void m_sampling_timeout_handler(void *p_context) {
   UNUSED_PARAMETER(p_context);
 #if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
 #if LOG_LOW_DETAIL == 1
-  NRF_LOG_INFO("SAMPLE RATE = %dHz \r\n", m_samples);
+//  NRF_LOG_INFO("SAMPLE RATE = %dHz \r\n", m_samples);
 #endif
   m_samples = 0;
 #endif
 }
 #endif
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-static void mpu_send_timeout_handler(void *p_context) {
-  //DEPENDS ON SAMPLING RATE
-  mpu_read_accel_array(&m_mpu);
-  mpu_read_gyro_array(&m_mpu);
-  if (m_mpu.mpu_count == 240) {
-    m_mpu.mpu_count = 0;
-    ble_mpu_combined_update_v2(&m_mpu);
-  }
-}
-#endif /**@(defined(MPU60x0) || defined(MPU9150) || defined(MPU9255))*/
 
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
+//#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
 
 static void battery_level_update(void) {
 //  ret_code_t err_code;
@@ -226,7 +195,7 @@ static void battery_level_meas_timeout_handler(void *p_context) {
   UNUSED_PARAMETER(p_context);
   battery_level_update();
 }
-#endif
+//#endif
 
 /**@brief Function for the Timer initialization.
  *
@@ -237,22 +206,18 @@ static void timers_init(void) {
   //Create timers
   ret_code_t err_code = app_timer_init();
   APP_ERROR_CHECK(err_code);
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-  err_code = app_timer_create(&m_mpu_send_timer_id, APP_TIMER_MODE_REPEATED, mpu_send_timeout_handler);
-  APP_ERROR_CHECK(err_code);
-#endif
 
 #if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
   err_code = app_timer_create(&m_sampling_timer_id, APP_TIMER_MODE_REPEATED, m_sampling_timeout_handler);
   APP_ERROR_CHECK(err_code);
 #endif
 
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
+//#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
   err_code = app_timer_create(&m_battery_timer_id,
       APP_TIMER_MODE_REPEATED,
       battery_level_meas_timeout_handler);
   APP_ERROR_CHECK(err_code);
-#endif
+//#endif
 }
 
 /**@brief Function for the GAP initialization.
@@ -297,9 +262,7 @@ static void gatt_init(void) {
 static void services_init(void) {
   uint32_t err_code;
 /**@Device Information Service:*/
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-  ble_mpu_service_init(&m_mpu);
-#endif
+  ble_sg_service_init(&m_sg);
 
 #if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
   ble_bas_init_t bas_init;
@@ -394,15 +357,10 @@ static void application_timers_start(void) {
   APP_ERROR_CHECK(err_code);
 #endif
 
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-  err_code = app_timer_start(m_mpu_send_timer_id, TICKS_MPU_SAMPLING_INTERVAL, NULL);
-  APP_ERROR_CHECK(err_code);
-#endif
-
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
+//#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
   err_code = app_timer_start(m_battery_timer_id, BATTERY_LEVEL_MEAS_INTERVAL, NULL);
   APP_ERROR_CHECK(err_code);
-#endif
+//#endif
 }
 
 /**@brief Function for putting the chip into sleep mode.
@@ -542,9 +500,7 @@ static void ble_evt_dispatch(ble_evt_t *p_ble_evt) {
 #if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
   ble_bas_on_ble_evt(&m_bas, p_ble_evt);
 #endif
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-  ble_mpu_on_ble_evt(&m_mpu, p_ble_evt);
-#endif
+  ble_sg_on_ble_evt(&m_sg, p_ble_evt);
 }
 
 /**@brief Function for dispatching a system event to interested modules.
@@ -702,25 +658,6 @@ static void advertising_start(void) {
   APP_ERROR_CHECK(err_code);
 }
 
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-///*
-//MPU9250;MPU9255
-void mpu_setup(void) {
-  ret_code_t ret_code;
-  // Initiate MPU driver
-  ret_code = mpu_init();
-  APP_ERROR_CHECK(ret_code); // Check for errors in return value
-
-  // Setup and configure the MPU with intial values
-  mpu_config_t p_mpu_config = MPU_DEFAULT_CONFIG(); // Load default values
-  p_mpu_config.smplrt_div = 19;                     // Change sampelrate. Sample Rate = Gyroscope Output Rate / (1 + SMPLRT_DIV). 19 gives a sample rate of 50Hz
-  p_mpu_config.accel_config.afs_sel = AFS_16G;      // Set accelerometer full scale range to 2G
-  ret_code = mpu_config(&p_mpu_config);             // Configure the MPU with above values
-  APP_ERROR_CHECK(ret_code);                        // Check for errors in return value
-}
-//*/
-#endif
-
 #if defined(SAADC_ENABLED) && SAADC_ENABLED == 1
 
 void saadc_callback(nrf_drv_saadc_evt_t const *p_event) {
@@ -731,20 +668,21 @@ void saadc_callback(nrf_drv_saadc_evt_t const *p_event) {
     APP_ERROR_CHECK(err_code);
 
     int i;
-    NRF_LOG_INFO("ADC event number: %d\r\n", (int)m_adc_evt_counter);
 
+    int sum = 0;
     for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
-      NRF_LOG_INFO("%d\r\n", p_event->data.done.p_buffer[i]);
+      sum += p_event->data.done.p_buffer[i];
     }
-    m_bas.battery_level = p_event->data.done.p_buffer[3];
-    err_code = ble_bas_battery_level_update(&m_bas);
-    if ((err_code != NRF_SUCCESS) &&
-        (err_code != NRF_ERROR_INVALID_STATE) &&
-        (err_code != NRF_ERROR_RESOURCES) &&
-        (err_code != BLE_ERROR_GATTS_SYS_ATTR_MISSING)) {
-      APP_ERROR_HANDLER(err_code);
+    NRF_LOG_INFO("%d\r\n", sum/4);
+    //Transmit via BLuetooth.
+    uint16_t sum_short = (uint16_t) sum; 
+    memcpy(&m_sg.sg_ch1_buffer[m_sg.sg_ch1_count], &sum_short, 2);
+    m_sg.sg_ch1_count += 2;
+    if (m_sg.sg_ch1_count == SG_PACKET_LENGTH) {
+      m_sg.sg_ch1_count = 0;
+      ble_sg_update_1ch(&m_sg); 
     }
-    m_adc_evt_counter++;
+    //Transmit Packet:
     nrf_gpio_pin_set(BATTERY_LOAD_SWITCH_CTRL_PIN); //LOAD SWITCH OFF
   }
 }
@@ -753,9 +691,9 @@ void saadc_init(void) {
 
   ret_code_t err_code;
   nrf_drv_saadc_config_t saadc_config;
-  //Configure SAADC
-  saadc_config.low_power_mode = true;                     //Enable low power mode.
-  saadc_config.resolution = NRF_SAADC_RESOLUTION_12BIT;   //Set SAADC resolution to 12-bit. This will make the SAADC output values from 0 (when input voltage is 0V) to 2^12=2048 (when input voltage is 3.6V for channel gain setting of 1/6).
+  //TODO: Adjust Configuration: SAADC
+  saadc_config.low_power_mode = false;                     //Enable low power mode.
+  saadc_config.resolution = NRF_SAADC_RESOLUTION_14BIT;   //Set SAADC resolution to 12-bit. This will make the SAADC output values from 0 (when input voltage is 0V) to 2^12=2048 (when input voltage is 3.6V for channel gain setting of 1/6).
   saadc_config.oversample = NRF_SAADC_OVERSAMPLE_4X;      //Set oversample to 4x. This will make the SAADC output a single averaged value when the SAMPLE task is triggered 4 times.
   saadc_config.interrupt_priority = APP_IRQ_PRIORITY_LOW; //Set SAADC interrupt to low priority.
 
@@ -797,10 +735,7 @@ int main(void) {
   advertising_init();
   services_init();
   conn_params_init();
-
-#if (defined(MPU60x0) || defined(MPU9150) || defined(MPU9250) || defined(MPU9255))
-  mpu_setup();
-#endif
+  m_sg.sg_ch1_count = 0;
 
 #if defined(SAADC_ENABLED) && SAADC_ENABLED == 1
   saadc_init();
