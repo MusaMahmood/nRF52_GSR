@@ -191,7 +191,7 @@ static void m_sampling_timeout_handler(void *p_context) {
   UNUSED_PARAMETER(p_context);
 #if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
 #if LOG_LOW_DETAIL == 1
-  NRF_LOG_INFO("SAMPLE RATE = %dHz \r\n", m_samples);
+//  NRF_LOG_INFO("SAMPLE RATE = %dHz \r\n", m_samples);
 #endif
   m_samples = 0;
 #endif
@@ -731,11 +731,13 @@ void saadc_callback(nrf_drv_saadc_evt_t const *p_event) {
     APP_ERROR_CHECK(err_code);
 
     int i;
-    NRF_LOG_INFO("ADC event number: %d\r\n", (int)m_adc_evt_counter);
-
+//    NRF_LOG_INFO("ADC event number: %d\r\n", (int)m_adc_evt_counter);
+    int sum = 0;
     for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
-      NRF_LOG_INFO("%d\r\n", p_event->data.done.p_buffer[i]);
+//      NRF_LOG_INFO("%d\r\n", p_event->data.done.p_buffer[i]);
+      sum += p_event->data.done.p_buffer[i];
     }
+    NRF_LOG_INFO("%d\r\n", sum/4);
     m_bas.battery_level = p_event->data.done.p_buffer[3];
     err_code = ble_bas_battery_level_update(&m_bas);
     if ((err_code != NRF_SUCCESS) &&
@@ -755,7 +757,7 @@ void saadc_init(void) {
   nrf_drv_saadc_config_t saadc_config;
   //Configure SAADC
   saadc_config.low_power_mode = true;                     //Enable low power mode.
-  saadc_config.resolution = NRF_SAADC_RESOLUTION_12BIT;   //Set SAADC resolution to 12-bit. This will make the SAADC output values from 0 (when input voltage is 0V) to 2^12=2048 (when input voltage is 3.6V for channel gain setting of 1/6).
+  saadc_config.resolution = NRF_SAADC_RESOLUTION_14BIT;   //Set SAADC resolution to 12-bit. This will make the SAADC output values from 0 (when input voltage is 0V) to 2^12=2048 (when input voltage is 3.6V for channel gain setting of 1/6).
   saadc_config.oversample = NRF_SAADC_OVERSAMPLE_4X;      //Set oversample to 4x. This will make the SAADC output a single averaged value when the SAMPLE task is triggered 4 times.
   saadc_config.interrupt_priority = APP_IRQ_PRIORITY_LOW; //Set SAADC interrupt to low priority.
 
