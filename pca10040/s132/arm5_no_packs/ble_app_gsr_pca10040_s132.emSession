@@ -14,6 +14,8 @@
   <ProjectSessionItem path="ble_app_gsr_pca10040_s132"/>
   <ProjectSessionItem path="ble_app_gsr_pca10040_s132;ble_app_gsr_pca10040_s132"/>
   <ProjectSessionItem path="ble_app_gsr_pca10040_s132;ble_app_gsr_pca10040_s132;Application"/>
+  <ProjectSessionItem path="ble_app_gsr_pca10040_s132;ble_app_gsr_pca10040_s132;FATFS"/>
+  <ProjectSessionItem path="ble_app_gsr_pca10040_s132;ble_app_gsr_pca10040_s132;nRF_Libraries"/>
  </Project>
  <Register1/>
  <Register2/>
@@ -38,7 +40,7 @@
   <Watches active="0" update="Never"/>
  </Watch4>
  <Files>
-  <SessionOpenFile windowGroup="DockEditLeft" x="33" y="130" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="87" codecName="Default"/>
+  <SessionOpenFile windowGroup="DockEditLeft" x="2" y="932" useTextEdit="1" useBinaryEdit="0" left="0" path="../../../main.c" selected="1" top="882" codecName="Default"/>
  </Files>
- <ARMCrossStudioWindow activeProject="ble_app_gsr_pca10040_s132" fileDialogDefaultFilter="*.c" autoConnectTarget="J-Link" buildConfiguration="nrf52832_xxaa" debugSearchFileMap="" fileDialogInitialDirectory="" debugSearchPath="" autoConnectCapabilities="3711"/>
+ <ARMCrossStudioWindow activeProject="ble_app_gsr_pca10040_s132" fileDialogDefaultFilter="" autoConnectTarget="J-Link" buildConfiguration="nrf52832_xxaa" debugSearchFileMap="" fileDialogInitialDirectory="E:/Dropbox (GaTech)/NRF/nRF5_SDK_13.1.0/components/libraries/sdcard" debugSearchPath="" autoConnectCapabilities="3711"/>
 </session>
