@@ -78,11 +78,11 @@
 #define NRF_LOG_MODULE_NAME "APP"
 #include "nrf_log.h"
 #include "nrf_log_ctrl.h"
-#warning ("CHECK LFCLK & LED DEFS IN custom_board.h")
+#warning("CHECK LFCLK & LED DEFS IN custom_board.h")
 #include "ble_dis.h"
+#include "nrf_delay.h"
 #include "nrf_drv_gpiote.h"
 #include "uicr_config.h"
-#include "nrf_delay.h"
 #define DEVICE_MODEL_NUMBERSTR "Version 3.1"
 #define DEVICE_FIRMWARE_STRING "Version 13.1.0"
 static bool m_connected = false;
@@ -96,31 +96,39 @@ ble_sg_t m_sg;
 static nrf_saadc_value_t m_buffer_pool[SAMPLES_IN_BUFFER];
 static uint32_t m_adc_evt_counter;
 #endif
-#define BATTERY_LEVEL_MEAS_INTERVAL APP_TIMER_TICKS(50) /**< Battery level measurement interval (ticks). */
-APP_TIMER_DEF(m_battery_timer_id);                        /**< Battery timer. */
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
-#include "ble_bas.h"
-static ble_bas_t m_bas;                                   /**< Structure used to identify the battery service. */
-#endif
 
+/* TEMP SENSOR START */
+#include "nrf_drv_twi.h"
+/* Common addresses definition for temperature sensor. */
+#define TMP116_ADDR (0x90U >> 1)
+/* Indicates if operation on TWI has ended. */
+static volatile bool m_xfer_done = false;
+/* TWI instance. */
+static const nrf_drv_twi_t m_twi = NRF_DRV_TWI_INSTANCE(0);
+/* Buffer for samples read from temperature sensor. */
+static uint8_t m_temp_sample_counter;
+static uint16_t m_sample; // Holds sensor value;
+static uint16_t m_temp_sample_buffer[4];
+/* TEMP SENSOR END */
+
+/* SAADC & TEMP Sensor Timer */
 #if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
 #define TICKS_SAMPLING_INTERVAL APP_TIMER_TICKS(1000)
 APP_TIMER_DEF(m_sampling_timer_id);
-static uint16_t m_samples;
 #endif
 
 #define APP_FEATURE_NOT_SUPPORTED BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2 /**< Reply when unsupported features are requested. */
 
-#define DEVICE_NAME "nRF52-GSR_v2"           //"nRF52_SG"         /**< Name of device. Will be included in the advertising data. */
+#define DEVICE_NAME "nRF52-GSR_v2" //"nRF52_SG"         /**< Name of device. Will be included in the advertising data. */
 
 #define MANUFACTURER_NAME "Potato Labs" /**< Manufacturer. Will be passed to Device Information Service. */
 #define APP_ADV_INTERVAL 300            /**< The advertising interval (in units of 0.625 ms. This value corresponds to 187.5 ms). */
 #define APP_ADV_TIMEOUT_IN_SECONDS 180  /**< The advertising timeout in units of seconds. */
 
 #define MIN_CONN_INTERVAL MSEC_TO_UNITS(7.5, UNIT_1_25_MS) /**< Minimum acceptable connection interval (0.1 seconds). */
-#define MAX_CONN_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS) /**< Maximum acceptable connection interval (0.2 second). */
-#define SLAVE_LATENCY 0                                   /**< Slave latency. */
-#define CONN_SUP_TIMEOUT MSEC_TO_UNITS(4000, UNIT_10_MS)  /**< Connection supervisory timeout (4 seconds). */
+#define MAX_CONN_INTERVAL MSEC_TO_UNITS(20, UNIT_1_25_MS)  /**< Maximum acceptable connection interval (0.2 second). */
+#define SLAVE_LATENCY 0                                    /**< Slave latency. */
+#define CONN_SUP_TIMEOUT MSEC_TO_UNITS(4000, UNIT_10_MS)   /**< Connection supervisory timeout (4 seconds). */
 
 #define CONN_CFG_TAG 1 /**< A tag that refers to the BLE stack configuration we set with @ref sd_ble_cfg_set. Default tag is @ref BLE_CONN_CFG_TAG_DEFAULT. */
 
@@ -166,36 +174,81 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t *p_file_name) {
   app_error_handler(DEAD_BEEF, line_num, p_file_name);
 }
 
-#if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
-static void m_sampling_timeout_handler(void *p_context) {
-  UNUSED_PARAMETER(p_context);
-#if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
-#if LOG_LOW_DETAIL == 1
-//  NRF_LOG_INFO("SAMPLE RATE = %dHz \r\n", m_samples);
-#endif
-  m_samples = 0;
-#endif
+/**
+ * @brief Function for handling data from temperature sensor.
+ *
+ * @param[in] temp          Temperature in Celsius degrees read from sensor.
+ */
+__STATIC_INLINE void data_handler(uint16_t temp) {
+  int16_t data = temp;
+  data = ((data << 8) & 0xff00) | ((data >> 8) & 0x00ff);
+  m_temp_sample_buffer[m_temp_sample_counter] = data; 
+  m_temp_sample_counter++;
+  if (m_temp_sample_counter == 4) {
+      m_temp_sample_counter = 0;
+      // Average: 
+      int sum = 0;
+      int i;
+      for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
+        sum += m_temp_sample_buffer[i];
+      }
+      int average = sum/4; 
+      NRF_LOG_INFO("Temperature: %d (as int).\r\n", average);
+  }
 }
-#endif
 
-//#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
+/**
+ * @brief TWI events handler.
+ */
+void twi_handler(nrf_drv_twi_evt_t const *p_event, void *p_context) {
+  switch (p_event->type) {
+  case NRF_DRV_TWI_EVT_DONE:
+    if (p_event->xfer_desc.type == NRF_DRV_TWI_XFER_RX) {
+      data_handler(m_sample);
+    }
+    m_xfer_done = true;
+    break;
+  default:
+    break;
+  }
+}
 
-static void battery_level_update(void) {
-//  ret_code_t err_code;
-//TODO: CALL SAADC
+/**
+ * @brief Function for reading data from temperature sensor.
+ */
+static void read_sensor_data() {
+  m_xfer_done = false;
+
+  /* Read 1 byte from the specified address - skip 3 bits dedicated for fractional part of temperature. */
+  ret_code_t err_code = nrf_drv_twi_rx(&m_twi, TMP116_ADDR, (uint8_t *)&m_sample, sizeof(m_sample));
+  APP_ERROR_CHECK(err_code);
+}
+
+static void saadc_sample_update(void) {
+// CALL SAADC
 #if defined(SAADC_ENABLED) && SAADC_ENABLED == 1
-  //Enable load switch:
-  nrf_gpio_pin_clear(BATTERY_LOAD_SWITCH_CTRL_PIN);
   //Sample with ADC
   nrf_drv_saadc_sample();
 #endif
 }
 
-static void battery_level_meas_timeout_handler(void *p_context) {
+#if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
+static void m_sampling_timeout_handler(void *p_context) {
   UNUSED_PARAMETER(p_context);
-  battery_level_update();
+#if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
+  // ADC Sample : GSR:
+  saadc_sample_update();
+
+  do {
+    __WFE();
+  } while (m_xfer_done == false);
+  // Read From Temp Sensor via TWI:
+  read_sensor_data();
+
+  // TODO: Save Data To uSD Card
+#endif
 }
-//#endif
+#endif
 
 /**@brief Function for the Timer initialization.
  *
@@ -212,12 +265,6 @@ static void timers_init(void) {
   APP_ERROR_CHECK(err_code);
 #endif
 
-//#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
-  err_code = app_timer_create(&m_battery_timer_id,
-      APP_TIMER_MODE_REPEATED,
-      battery_level_meas_timeout_handler);
-  APP_ERROR_CHECK(err_code);
-//#endif
 }
 
 /**@brief Function for the GAP initialization.
@@ -261,29 +308,8 @@ static void gatt_init(void) {
  */
 static void services_init(void) {
   uint32_t err_code;
-/**@Device Information Service:*/
+  /**@Device Information Service:*/
   ble_sg_service_init(&m_sg);
-
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
-  ble_bas_init_t bas_init;
-  // Initialize Battery Service.
-  memset(&bas_init, 0, sizeof(bas_init));
-
-  // Here the sec level for the Battery Service can be changed/increased.
-  BLE_GAP_CONN_SEC_MODE_SET_OPEN(&bas_init.battery_level_char_attr_md.cccd_write_perm);
-  BLE_GAP_CONN_SEC_MODE_SET_OPEN(&bas_init.battery_level_char_attr_md.read_perm);
-  BLE_GAP_CONN_SEC_MODE_SET_NO_ACCESS(&bas_init.battery_level_char_attr_md.write_perm);
-
-  BLE_GAP_CONN_SEC_MODE_SET_OPEN(&bas_init.battery_level_report_read_perm);
-
-  bas_init.evt_handler = NULL;
-  bas_init.support_notification = true;
-  bas_init.p_report_ref = NULL;
-  bas_init.batt_level = 0x64;
-
-  err_code = ble_bas_init(&m_bas, &bas_init);
-  APP_ERROR_CHECK(err_code);
-#endif
 
   ble_dis_init_t dis_init;
   memset(&dis_init, 0, sizeof(dis_init));
@@ -356,11 +382,6 @@ static void application_timers_start(void) {
   err_code = app_timer_start(m_sampling_timer_id, TICKS_SAMPLING_INTERVAL, NULL);
   APP_ERROR_CHECK(err_code);
 #endif
-
-//#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
-  err_code = app_timer_start(m_battery_timer_id, BATTERY_LEVEL_MEAS_INTERVAL, NULL);
-  APP_ERROR_CHECK(err_code);
-//#endif
 }
 
 /**@brief Function for putting the chip into sleep mode.
@@ -395,6 +416,7 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt) {
     break;
 
   case BLE_ADV_EVT_IDLE:
+//    NRF_LOG_INFO("Idle.\r\n");
     //sleep_mode_enter();
     break;
 
@@ -420,7 +442,6 @@ static void on_ble_evt(ble_evt_t *p_ble_evt) {
     advertising_start();
     break; // BLE_GAP_EVT_DISCONNECTED
   case BLE_GAP_EVT_CONNECTED:
-    battery_level_update();
 #if LEDS_ENABLE == 1
     nrf_gpio_pin_set(LED_2);
     nrf_gpio_pin_clear(LED_1);
@@ -497,9 +518,7 @@ static void ble_evt_dispatch(ble_evt_t *p_ble_evt) {
   on_ble_evt(p_ble_evt);
   ble_advertising_on_ble_evt(p_ble_evt);
   nrf_ble_gatt_on_ble_evt(&m_gatt, p_ble_evt);
-#if defined(BLE_BAS_ENABLED) && BLE_BAS_ENABLED == 1
-  ble_bas_on_ble_evt(&m_bas, p_ble_evt);
-#endif
+
   ble_sg_on_ble_evt(&m_sg, p_ble_evt);
 }
 
@@ -673,17 +692,16 @@ void saadc_callback(nrf_drv_saadc_evt_t const *p_event) {
     for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
       sum += p_event->data.done.p_buffer[i];
     }
-    NRF_LOG_INFO("%d\r\n", sum/4);
+    NRF_LOG_INFO("%d\r\n", sum / 4);
     //Transmit via BLuetooth.
-    uint16_t sum_short = (uint16_t) sum; 
+    uint16_t sum_short = (uint16_t)sum;
     memcpy(&m_sg.sg_ch1_buffer[m_sg.sg_ch1_count], &sum_short, 2);
     m_sg.sg_ch1_count += 2;
     if (m_sg.sg_ch1_count == SG_PACKET_LENGTH) {
       m_sg.sg_ch1_count = 0;
-      ble_sg_update_1ch(&m_sg); 
+      //Transmit Packet:
+      ble_sg_update_1ch(&m_sg);
     }
-    //Transmit Packet:
-    nrf_gpio_pin_set(BATTERY_LOAD_SWITCH_CTRL_PIN); //LOAD SWITCH OFF
   }
 }
 
@@ -691,8 +709,8 @@ void saadc_init(void) {
 
   ret_code_t err_code;
   nrf_drv_saadc_config_t saadc_config;
-  //TODO: Adjust Configuration: SAADC
-  saadc_config.low_power_mode = false;                     //Enable low power mode.
+  // SAADC Configuration:
+  saadc_config.low_power_mode = true;                     //Enable low power mode.
   saadc_config.resolution = NRF_SAADC_RESOLUTION_14BIT;   //Set SAADC resolution to 12-bit. This will make the SAADC output values from 0 (when input voltage is 0V) to 2^12=2048 (when input voltage is 3.6V for channel gain setting of 1/6).
   saadc_config.oversample = NRF_SAADC_OVERSAMPLE_4X;      //Set oversample to 4x. This will make the SAADC output a single averaged value when the SAMPLE task is triggered 4 times.
   saadc_config.interrupt_priority = APP_IRQ_PRIORITY_LOW; //Set SAADC interrupt to low priority.
@@ -712,11 +730,49 @@ void saadc_init(void) {
 
   err_code = nrf_drv_saadc_buffer_convert(&m_buffer_pool[0], SAMPLES_IN_BUFFER);
   APP_ERROR_CHECK(err_code);
-
-  //  err_code = nrf_drv_saadc_buffer_convert(m_buffer_pool[1], SAMPLES_IN_BUFFER);
-  //  APP_ERROR_CHECK(err_code);
 }
 #endif
+
+/**
+ * @brief Function for setting active mode on MMA7660 accelerometer.
+ */
+void TMP116_set_mode(void) {
+  ret_code_t err_code;
+
+  /* Writing to LM75B_REG_CONF "0" set temperature sensor in NORMAL mode. */
+  uint8_t reg[3] = {/*Address*/0x01, /*byte 1*/ 0x02, 0x30};
+  err_code = nrf_drv_twi_tx(&m_twi, TMP116_ADDR, reg, sizeof(reg), false);
+  APP_ERROR_CHECK(err_code);
+  while (m_xfer_done == false)
+    ;
+
+  /* Writing to pointer byte. */
+  reg[0] = 0x00;
+  m_xfer_done = false;
+  err_code = nrf_drv_twi_tx(&m_twi, TMP116_ADDR, reg, 1, false);
+  APP_ERROR_CHECK(err_code);
+  while (m_xfer_done == false)
+    ;
+}
+
+/**
+ * @brief UART initialization.
+ */
+void twi_init(void) {
+  ret_code_t err_code;
+
+  const nrf_drv_twi_config_t twi_config = {
+      .scl = 20,
+      .sda = 21,
+      .frequency = NRF_TWI_FREQ_100K,
+      .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
+      .clear_bus_init = false};
+
+  err_code = nrf_drv_twi_init(&m_twi, &twi_config, twi_handler, NULL);
+  APP_ERROR_CHECK(err_code);
+
+  nrf_drv_twi_enable(&m_twi);
+}
 
 static void wait_for_event(void) {
   (void)sd_app_evt_wait();
@@ -736,6 +792,10 @@ int main(void) {
   services_init();
   conn_params_init();
   m_sg.sg_ch1_count = 0;
+  m_temp_sample_counter = 0;
+  //TWI Init:
+  twi_init();
+  TMP116_set_mode();
 
 #if defined(SAADC_ENABLED) && SAADC_ENABLED == 1
   saadc_init();
@@ -749,9 +809,6 @@ int main(void) {
 #if LEDS_ENABLE == 1
   nrf_gpio_pin_clear(LED_2); // Green
   nrf_gpio_pin_set(LED_1);   //Blue
-#endif
-#if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
-  m_samples = 0;
 #endif
 // Enter main loop
 #if NRF_LOG_ENABLED == 1
