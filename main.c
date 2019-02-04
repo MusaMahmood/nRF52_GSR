@@ -113,9 +113,35 @@ static uint16_t m_temp_sample_buffer[4];
 
 /* SAADC & TEMP Sensor Timer */
 #if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
-#define TICKS_SAMPLING_INTERVAL APP_TIMER_TICKS(1000)
+#define TICKS_SAMPLING_INTERVAL APP_TIMER_TICKS(250)
 APP_TIMER_DEF(m_sampling_timer_id);
 #endif
+/* END SAADC Stuff*/
+
+/* uSD Card/FATFS Stuff: */
+#include "diskio_blkdev.h"
+#include "ff.h"
+#include "nrf_block_dev_sdc.h"
+#define SDC_SCK_PIN 19  ///< SDC serial clock (SCK) pin.
+#define SDC_MOSI_PIN 20 ///< SDC serial data in (DI) pin.
+#define SDC_MISO_PIN 18 ///< SDC serial data out (DO) pin.
+#define SDC_CS_PIN 21   ///< SDC chip select (CS) pin.
+#define FILE_NAME "Data.dat"
+
+static uint8_t count_number_samples = 0;
+static int16_t data_to_write[2] = {0, 0};
+
+/**
+ * @brief  SDC block device definition
+ * */
+NRF_BLOCK_DEV_SDC_DEFINE(
+    m_block_dev_sdc,
+    NRF_BLOCK_DEV_SDC_CONFIG(
+        SDC_SECTOR_SIZE,
+        APP_SDCARD_CONFIG(SDC_MOSI_PIN, SDC_MISO_PIN, SDC_SCK_PIN, SDC_CS_PIN)),
+    NFR_BLOCK_DEV_INFO_CONFIG("Nordic", "SDC", "1.00"));
+
+/* END FATFS */
 
 #define APP_FEATURE_NOT_SUPPORTED BLE_GATT_STATUS_ATTERR_APP_BEGIN + 2 /**< Reply when unsupported features are requested. */
 
@@ -182,18 +208,19 @@ void assert_nrf_callback(uint16_t line_num, const uint8_t *p_file_name) {
 __STATIC_INLINE void data_handler(uint16_t temp) {
   int16_t data = temp;
   data = ((data << 8) & 0xff00) | ((data >> 8) & 0x00ff);
-  m_temp_sample_buffer[m_temp_sample_counter] = data; 
+  m_temp_sample_buffer[m_temp_sample_counter] = data;
   m_temp_sample_counter++;
   if (m_temp_sample_counter == 4) {
-      m_temp_sample_counter = 0;
-      // Average: 
-      int sum = 0;
-      int i;
-      for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
-        sum += m_temp_sample_buffer[i];
-      }
-      int average = sum/4; 
-      NRF_LOG_INFO("Temperature: %d (as int).\r\n", average);
+    m_temp_sample_counter = 0;
+    // Average:
+    int sum = 0;
+    int i;
+    for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
+      sum += m_temp_sample_buffer[i];
+    }
+    int average = sum / 4;
+    NRF_LOG_INFO("Temperature: %d (as int).\r\n", average);
+    data_to_write[1] = (int16_t)average;
   }
 }
 
@@ -232,6 +259,30 @@ static void saadc_sample_update(void) {
 #endif
 }
 
+static void fatfs_write_data(void) {
+  FRESULT ff_result;
+  static FIL file;
+  uint32_t bytes_written;
+
+  NRF_LOG_INFO("Writing to file " FILE_NAME "...\r\n");
+  ff_result = f_open(&file, FILE_NAME, FA_READ | FA_WRITE | FA_OPEN_APPEND);
+  if (ff_result != FR_OK) {
+    NRF_LOG_INFO("Unable to open or create file: " FILE_NAME ".\r\n");
+    return;
+  }
+  // Break into individual bytes:
+  uint8_t data_array_bytes[4];
+  memcpy(&data_array_bytes[0], &data_to_write[0], 4);
+  ff_result = f_write(&file, data_array_bytes, 4, (UINT *)&bytes_written);
+  if (ff_result != FR_OK) {
+    NRF_LOG_INFO("Write failed\r\n.");
+  } else {
+    NRF_LOG_INFO("%d bytes written.\r\n", bytes_written);
+  }
+
+  (void)f_close(&file);
+}
+
 #if defined(APP_TIMER_SAMPLING) && APP_TIMER_SAMPLING == 1
 static void m_sampling_timeout_handler(void *p_context) {
   UNUSED_PARAMETER(p_context);
@@ -244,8 +295,13 @@ static void m_sampling_timeout_handler(void *p_context) {
   } while (m_xfer_done == false);
   // Read From Temp Sensor via TWI:
   read_sensor_data();
+  // TODO: Save Data To uSD Card, only keep 4th averaged value.
+  count_number_samples++;
+  if (count_number_samples == 4) {
+    count_number_samples = 0;
+    fatfs_write_data();
+  }
 
-  // TODO: Save Data To uSD Card
 #endif
 }
 #endif
@@ -264,7 +320,6 @@ static void timers_init(void) {
   err_code = app_timer_create(&m_sampling_timer_id, APP_TIMER_MODE_REPEATED, m_sampling_timeout_handler);
   APP_ERROR_CHECK(err_code);
 #endif
-
 }
 
 /**@brief Function for the GAP initialization.
@@ -370,6 +425,12 @@ static void conn_params_init(void) {
   APP_ERROR_CHECK(err_code);
 }
 
+static void application_timers_stop(void) {
+  ret_code_t err_code;
+  err_code = app_timer_stop(m_sampling_timer_id);
+  APP_ERROR_CHECK(err_code);
+}
+
 /**@brief Function for starting timers.
  */
 static void application_timers_start(void) {
@@ -416,7 +477,7 @@ static void on_adv_evt(ble_adv_evt_t ble_adv_evt) {
     break;
 
   case BLE_ADV_EVT_IDLE:
-//    NRF_LOG_INFO("Idle.\r\n");
+    //    NRF_LOG_INFO("Idle.\r\n");
     //sleep_mode_enter();
     break;
 
@@ -692,9 +753,10 @@ void saadc_callback(nrf_drv_saadc_evt_t const *p_event) {
     for (i = 0; i < SAMPLES_IN_BUFFER; i++) {
       sum += p_event->data.done.p_buffer[i];
     }
-    NRF_LOG_INFO("%d\r\n", sum / 4);
+    NRF_LOG_INFO("SAADC val: %d\r\n", sum / 4);
     //Transmit via BLuetooth.
-    uint16_t sum_short = (uint16_t)sum;
+    int16_t sum_short = (int16_t)(sum / 4);
+    data_to_write[0] = sum_short;
     memcpy(&m_sg.sg_ch1_buffer[m_sg.sg_ch1_count], &sum_short, 2);
     m_sg.sg_ch1_count += 2;
     if (m_sg.sg_ch1_count == SG_PACKET_LENGTH) {
@@ -740,7 +802,7 @@ void TMP116_set_mode(void) {
   ret_code_t err_code;
 
   /* Writing to LM75B_REG_CONF "0" set temperature sensor in NORMAL mode. */
-  uint8_t reg[3] = {/*Address*/0x01, /*byte 1*/ 0x02, 0x30};
+  uint8_t reg[3] = {/*Address*/ 0x01, /*byte 1*/ 0x02, 0x30};
   err_code = nrf_drv_twi_tx(&m_twi, TMP116_ADDR, reg, sizeof(reg), false);
   APP_ERROR_CHECK(err_code);
   while (m_xfer_done == false)
@@ -762,8 +824,8 @@ void twi_init(void) {
   ret_code_t err_code;
 
   const nrf_drv_twi_config_t twi_config = {
-      .scl = 20,
-      .sda = 21,
+      .scl = TMP116_SCL,
+      .sda = TMP116_SDA,
       .frequency = NRF_TWI_FREQ_100K,
       .interrupt_priority = APP_IRQ_PRIORITY_HIGH,
       .clear_bus_init = false};
@@ -777,6 +839,69 @@ void twi_init(void) {
 static void wait_for_event(void) {
   (void)sd_app_evt_wait();
 }
+
+static void fatfs_init(void) {
+  static FATFS fs;
+  static DIR dir;
+  static FILINFO fno;
+  //
+
+  //  uint32_t bytes_written;
+  FRESULT ff_result;
+  DSTATUS disk_state = STA_NOINIT;
+
+  // Initialize FATFS disk I/O interface by providing the block device.
+  static diskio_blkdev_t drives[] =
+      {
+          DISKIO_BLOCKDEV_CONFIG(NRF_BLOCKDEV_BASE_ADDR(m_block_dev_sdc, block_dev), NULL)};
+
+  diskio_blockdev_register(drives, ARRAY_SIZE(drives));
+
+  NRF_LOG_INFO("Initializing disk 0 (SDC)...\r\n");
+  for (uint32_t retries = 3; retries && disk_state; --retries) {
+    disk_state = disk_initialize(0);
+  }
+  if (disk_state) {
+    NRF_LOG_INFO("Disk initialization failed.\r\n");
+    return;
+  }
+
+  uint32_t blocks_per_mb = (1024uL * 1024uL) / m_block_dev_sdc.block_dev.p_ops->geometry(&m_block_dev_sdc.block_dev)->blk_size;
+  uint32_t capacity = m_block_dev_sdc.block_dev.p_ops->geometry(&m_block_dev_sdc.block_dev)->blk_count / blocks_per_mb;
+  NRF_LOG_INFO("Capacity: %d MB\r\n", capacity);
+
+  NRF_LOG_INFO("Mounting volume...\r\n");
+  ff_result = f_mount(&fs, "", 1);
+  if (ff_result) {
+    NRF_LOG_INFO("Mount failed.\r\n");
+    return;
+  }
+
+  NRF_LOG_INFO("\r\n Listing directory: /\r\n");
+  ff_result = f_opendir(&dir, "/");
+  if (ff_result) {
+    NRF_LOG_INFO("Directory listing failed!\r\n");
+    return;
+  }
+
+  do {
+    ff_result = f_readdir(&dir, &fno);
+    if (ff_result != FR_OK) {
+      NRF_LOG_INFO("Directory read failed.");
+      return;
+    }
+
+    if (fno.fname[0]) {
+      if (fno.fattrib & AM_DIR) {
+        NRF_LOG_RAW_INFO("   <DIR>   %s\r\n", (uint32_t)fno.fname);
+      } else {
+        NRF_LOG_RAW_INFO("%9lu  %s\r\n", fno.fsize, (uint32_t)fno.fname);
+      }
+    }
+  } while (fno.fname[0]);
+  NRF_LOG_RAW_INFO("\r\n");
+}
+
 /**@brief Function for application main entry.
  */
 int main(void) {
@@ -793,6 +918,7 @@ int main(void) {
   conn_params_init();
   m_sg.sg_ch1_count = 0;
   m_temp_sample_counter = 0;
+  count_number_samples = 0;
   //TWI Init:
   twi_init();
   TMP116_set_mode();
@@ -800,8 +926,11 @@ int main(void) {
 #if defined(SAADC_ENABLED) && SAADC_ENABLED == 1
   saadc_init();
 #endif
+  // uSD Card Test:
+  fatfs_init();
 
   // Start execution.
+  // Start Timers
   application_timers_start();
   advertising_start();
   NRF_LOG_RAW_INFO(" BLE Advertising Start! \r\n");

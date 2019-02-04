@@ -2,7 +2,7 @@
 #define CUSTOM_BOARD_H
 //BOARD_CUSTOM
 //BOARD_EXG_V3
-#ifdef BOARD_2CH_ECG_RAT
+#if defined (CUSTOM_BOARD_FLEX) | defined (CUSTOM_BOARD_PCB)
 //External LFCLK
 //#define NRF_CLOCK_LFCLKSRC           \
 //  { .source = NRF_CLOCK_LF_SRC_XTAL, \
@@ -22,6 +22,15 @@
 //see SDK Config for BLE_BAS_ENABLED
 //1. SAADC_ENABLED
 
+#ifdef CUSTOM_BOARD_PCB
+#define TMP116_SCL 20
+#define TMP116_SDA 21
+#endif
+
+#ifdef CUSTOM_BOARD_FLEX
+#define TMP116_SCL 12
+#define TMP116_SDA 13
+#endif
 
 #endif
 #endif

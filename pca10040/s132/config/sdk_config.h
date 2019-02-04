@@ -2130,7 +2130,7 @@
 // <e> SPI_ENABLED - nrf_drv_spi - SPI/SPIM peripheral driver
 //==========================================================
 #ifndef SPI_ENABLED
-#define SPI_ENABLED 0
+#define SPI_ENABLED 1
 #endif
 #if  SPI_ENABLED
 // <o> SPI_DEFAULT_CONFIG_IRQ_PRIORITY  - Interrupt priority
@@ -2161,7 +2161,7 @@
 
 #ifndef SPI0_USE_EASY_DMA
 
-#define SPI0_USE_EASY_DMA 1
+#define SPI0_USE_EASY_DMA 0
 #endif
 
 // <o> SPI0_DEFAULT_FREQUENCY  - SPI frequency
@@ -2184,7 +2184,7 @@
 // <e> SPI1_ENABLED - Enable SPI1 instance
 //==========================================================
 #ifndef SPI1_ENABLED
-#define SPI1_ENABLED 0
+#define SPI1_ENABLED 1
 #endif
 #if  SPI1_ENABLED
 // <q> SPI1_USE_EASY_DMA  - Use EasyDMA
@@ -2669,7 +2669,7 @@
  
 
 #ifndef TWI1_USE_EASY_DMA
-#define TWI1_USE_EASY_DMA 0
+#define TWI1_USE_EASY_DMA 1
 #endif
 
 #endif //TWI1_ENABLED
@@ -3169,6 +3169,56 @@
 #ifndef APP_TWI_ENABLED
 #define APP_TWI_ENABLED 0
 #endif
+
+#ifndef APP_FIFO_ENABLED
+#define APP_FIFO_ENABLED 1
+#endif
+
+// <e> APP_SDCARD_ENABLED - app_sdcard - SD/MMC card support using SPI
+//==========================================================
+#ifndef APP_SDCARD_ENABLED
+#define APP_SDCARD_ENABLED 1
+#endif
+#if  APP_SDCARD_ENABLED
+// <o> APP_SDCARD_SPI_INSTANCE  - SPI instance used
+ 
+// <0=> 0 
+// <1=> 1 
+// <2=> 2 
+
+#ifndef APP_SDCARD_SPI_INSTANCE
+#define APP_SDCARD_SPI_INSTANCE 1
+#endif
+
+// <o> APP_SDCARD_FREQ_INIT  - SPI frequency
+ 
+// <33554432=> 125 kHz 
+// <67108864=> 250 kHz 
+// <134217728=> 500 kHz 
+// <268435456=> 1 MHz 
+// <536870912=> 2 MHz 
+// <1073741824=> 4 MHz 
+// <2147483648=> 8 MHz 
+
+#ifndef APP_SDCARD_FREQ_INIT
+#define APP_SDCARD_FREQ_INIT 67108864
+#endif
+
+// <o> APP_SDCARD_FREQ_DATA  - SPI frequency
+ 
+// <33554432=> 125 kHz 
+// <67108864=> 250 kHz 
+// <134217728=> 500 kHz 
+// <268435456=> 1 MHz 
+// <536870912=> 2 MHz 
+// <1073741824=> 4 MHz 
+// <2147483648=> 8 MHz 
+
+#ifndef APP_SDCARD_FREQ_DATA
+#define APP_SDCARD_FREQ_DATA 1073741824
+#endif
+
+#endif //APP_SDCARD_ENABLED
 
 // <e> APP_UART_ENABLED - app_uart - UART driver
 //==========================================================
