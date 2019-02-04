@@ -1,6 +1,6 @@
 <!DOCTYPE CrossStudio_Project_File>
-<solution Name="ble_app_2CHEEGonly_pca10040_s132" target="8" version="2">
-  <project Name="ble_app_2CHEEGonly_pca10040_s132">
+<solution Name="ble_app_gsr_pca10040_s132" target="8" version="2">
+  <project Name="ble_app_gsr_pca10040_s132">
     <configuration
       Name="Common"
       arm_architecture="v7EM"
@@ -43,6 +43,8 @@
       <file file_name="../../../main.c" />
       <file file_name="custom_board.h" />
       <file file_name="ble_bas.c" />
+      <file file_name="ble_sg.c" />
+      <file file_name="ble_sg.h" />
     </folder>
     <folder Name="Board Definition">
       <file file_name="../../../../../../components/boards/boards.c" />

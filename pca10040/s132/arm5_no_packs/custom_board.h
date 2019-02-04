@@ -18,7 +18,7 @@
 #define LED_1 9
 #define LED_2 10
 #define BATTERY_AIN_PIN 5
-#define BATTERY_LOAD_SWITCH_CTRL_PIN 4
+//#define BATTERY_LOAD_SWITCH_CTRL_PIN 4
 //see SDK Config for BLE_BAS_ENABLED
 //1. SAADC_ENABLED
 
