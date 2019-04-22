@@ -787,7 +787,14 @@ void saadc_init(void) {
   APP_ERROR_CHECK(err_code);
 
   if (SAADC_BURST_MODE) {
-    NRF_SAADC->CH[0].CONFIG |= 0x01000000; //Configure burst mode for channel 0. Burst is useful together with oversampling. When triggering the SAMPLE task in burst mode, the SAADC will sample "Oversample" number of times as fast as it can and then output a single averaged value to the RAM buffer. If burst mode is not enabled, the SAMPLE task needs to be triggered "Oversample" number of times to output a single averaged value to the RAM buffer.
+    /**
+    Configure burst mode for channel 0. 
+    Burst is useful together with oversampling. 
+    When triggering the SAMPLE task in burst mode, the SAADC will sample "Oversample" number of times as fast as it
+     can and then output a single averaged value to the RAM buffer. If burst mode is not enabled, the SAMPLE task 
+     needs to be triggered "Oversample" number of times to output a single averaged value to the RAM buffer.
+    */
+    NRF_SAADC->CH[0].CONFIG |= 0x01000000;
   }
 
   err_code = nrf_drv_saadc_buffer_convert(&m_buffer_pool[0], SAMPLES_IN_BUFFER);
